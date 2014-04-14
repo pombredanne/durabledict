@@ -12,7 +12,7 @@ from contextlib import contextmanager
 import django.core.management
 from django.core.cache.backends.locmem import LocMemCache
 
-from kazoo.testing.harness import KazooTestHarness
+from kazoo.testing.harness import KazooTestCase
 
 import threading
 import thread
@@ -25,6 +25,7 @@ class BaseTest(object):
         return self.dict.__class__.__name__
 
     def setUp(self):
+        super(BaseTest, self).setUp()
         self.keyspace = 'test'
         self.dict = self.new_dict()
 
@@ -132,6 +133,11 @@ class BaseTest(object):
         self.assertEquals('bar', self.dict.get('foo'))
         self.assertEquals('default', self.dict.get('junk', 'default'))
         self.assertEquals(None, self.dict.get('junk'))
+
+    def test_get_does_not_remove_element(self):
+        self.dict['foo'] = 'bar'
+        self.assertEquals('bar', self.dict.get('foo'))
+        self.assertEquals('bar', self.dict.get('foo'))
 
     def test_contains_works(self):
         self.assertFalse('foo' in self.dict)
@@ -376,9 +382,6 @@ class TestModelDict(BaseTest, AutoSyncTrueTest, ModelDictTest, unittest.TestCase
         self.dict.setdefault('foo', 'notset')
         self.assertEquals(before, self.dict.last_updated())
 
-    def test_changes_to_last_updated_are_atomic(self):
-        pass
-
     def test_instances_true_returns_the_whole_object_at_they_key(self):
         self.dict.persist('foo', 'bar')
         self.dict.return_instances = True
@@ -388,6 +391,20 @@ class TestModelDict(BaseTest, AutoSyncTrueTest, ModelDictTest, unittest.TestCase
         self.dict.cache = mock.Mock()
         self.dict.touch_last_updated()
         self.dict.cache.incr.assert_called_once_with(self.dict.cache_key)
+
+    def test_resets_last_update_if_value_is_deleted(self):
+        self.dict.persist('foo', 'bar')
+        self.assertEquals(self.dict['foo'], 'bar')
+
+        self.dict.cache.delete(self.dict.cache_key)
+
+        self.dict.persist('baz', 'fizzle')
+        self.assertEquals(self.dict['foo'], 'bar')
+        self.assertEquals(self.dict['baz'], 'fizzle')
+        self.assertEquals(
+            self.dict.cache.get(self.dict.cache_key),
+            self.dict.LAST_UPDATED_MISSING_INCREMENT + 2  # for 2 updates
+        )
 
 
 class TestMemoryDict(BaseTest, AutoSyncTrueTest, unittest.TestCase):
@@ -402,14 +419,7 @@ class TestMemoryDict(BaseTest, AutoSyncTrueTest, unittest.TestCase):
         self.assertEquals(self.dict.values(), [obj])
 
 
-class TestZookeeperDict(BaseTest, ZookeeperDictTest, unittest.TestCase, KazooTestHarness):
-
-    def setUp(self):
-        self.setup_zookeeper()  # Makes self.client available as ZK client
-        super(TestZookeeperDict, self).setUp()
-
-    def tearDown(self):
-        self.teardown_zookeeper()
+class TestZookeeperDict(BaseTest, KazooTestCase, ZookeeperDictTest, unittest.TestCase):
 
     def new_dict(self):
         return ZookeeperDict(self.client, self.namespace)
@@ -427,14 +437,7 @@ class TestModelDictManualSync(BaseTest, ModelDictTest, AutoSyncFalseTest, unitte
         return ModelDict(Setting.objects, key_col='key', cache=self.cache, autosync=False)
 
 
-class TestZookeeperDictManualSync(BaseTest, ZookeeperDictTest, unittest.TestCase, KazooTestHarness):
-
-    def setUp(self):
-        self.setup_zookeeper()  # Makes self.client available as ZK client
-        super(TestZookeeperDictManualSync, self).setUp()
-
-    def tearDown(self):
-        self.teardown_zookeeper()
+class TestZookeeperDictManualSync(BaseTest, KazooTestCase, ZookeeperDictTest, unittest.TestCase, ):
 
     def new_dict(self):
         return ZookeeperDict(self.client, self.namespace, autosync=False)
