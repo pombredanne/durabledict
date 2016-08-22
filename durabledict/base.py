@@ -1,5 +1,7 @@
-import pickle
-import base64
+from durabledict.encoding import (
+    DefaultEncoding,
+    EncodingError,
+)
 
 
 class DurableDict(object):
@@ -8,12 +10,20 @@ class DurableDict(object):
     created or deleted.  Syncs with data fron the data store before every read,
     unless ``autosync=False`` is passed, which causes the dict to only sync
     data from the data store on writes and when ``sync()`` is called.
+
+    By default, objects are encoded in the durable store using
+    ``encoding.PickleEncoding``, but that can be changed by passing in another
+    encoder in as the ``encoding`` kwarg.
+
+    If you need to switch between two encodings provide the old_encoding as a fallback.
     """
 
-    def __init__(self, autosync=True):
+    def __init__(self, autosync=True, encoding=DefaultEncoding, old_encoding=None):
         self.__dict = dict()
         self.last_synced = 0
         self.autosync = autosync
+        self.encoding = encoding
+        self.old_encoding = old_encoding
         self.__sync_with_durable_storage(force=True)
 
     @property
@@ -81,6 +91,24 @@ class DurableDict(object):
             self.__dict = self.durables()
             self.last_synced = cache_expired_at
 
+    def _encode(self, val):
+        try:
+            return self.encoding.encode(val)
+        except EncodingError:
+            if self.old_encoding:
+                return self.old_encoding.encode(val)
+            else:
+                raise
+
+    def _decode(self, val):
+        try:
+            return self.encoding.encode(val)
+        except EncodingError:
+            if self.old_encoding:
+                return self.old_encoding.encode(val)
+            else:
+                raise
+
     def persist(self, key, val):
         raise NotImplementedError
 
@@ -93,10 +121,17 @@ class DurableDict(object):
     def last_updated(self):
         raise NotImplementedError
 
-    def _encode(self, data):
-        pickled = pickle.dumps(data, pickle.HIGHEST_PROTOCOL)
-        return base64.encodestring(pickled)
 
-    def _decode(self, data):
-        pickled = base64.decodestring(data)
-        return pickle.loads(pickled)
+class ConnectionDurableDict(DurableDict):
+    """Base for Durable Dict classes that are connection oriented."""
+
+    def __init__(self, keyspace, connection, *args, **kwargs):
+        self.keyspace = keyspace
+        self.connection = connection
+
+        self.connection_hook()
+
+        super(ConnectionDurableDict, self).__init__(*args, **kwargs)
+
+    def connection_hook(self):
+        pass

@@ -1,7 +1,8 @@
-from base import DurableDict
+from durabledict.base import DurableDict
 
 
 class ModelDict(DurableDict):
+
     """
     Dictionary-style access to a model. Populates a cache and a local in-memory
     to avoid multiple hits to the database.
@@ -48,14 +49,22 @@ class ModelDict(DurableDict):
     # details.
     LAST_UPDATED_MISSING_INCREMENT = 1000
 
-    def __init__(self, manager, cache, *args, **kwargs):
+    def __init__(
+        self,
+        manager=None,
+        cache=None,
+        key_col='key',
+        value_col='value',
+        return_instances=False,
+        *args,
+        **kwargs
+    ):
         self.manager = manager
         self.cache = cache
         self.cache_key = 'last_updated'
-        self.return_instances = kwargs.pop('return_instances', False)
-
-        self.key_col = kwargs.pop('key_col', 'key')
-        self.value_col = kwargs.pop('value_col', 'value')
+        self.return_instances = return_instances
+        self.key_col = key_col
+        self.value_col = value_col
 
         self.cache.add(self.cache_key, 1)  # Only adds if key does not exist
 
@@ -65,7 +74,7 @@ class ModelDict(DurableDict):
         instance, created = self.get_or_create(key, val)
 
         if not created and getattr(instance, self.value_col) != val:
-            setattr(instance, self.value_col, self._encode(val))
+            setattr(instance, self.value_col, self.encoding.encode(val))
             instance.save()
 
         self.touch_last_updated()
@@ -82,7 +91,7 @@ class ModelDict(DurableDict):
                 self.key_col,
                 self.value_col
             )
-            return dict((k, self._decode(v)) for k, v in encoded_tuples)
+            return dict((k, self.encoding.decode(v)) for k, v in encoded_tuples)
 
     def _setdefault(self, key, default=None):
         instance, created = self.get_or_create(key, default)
@@ -90,12 +99,12 @@ class ModelDict(DurableDict):
         if created:
             self.touch_last_updated()
 
-        return self._decode(getattr(instance, self.value_col))
+        return self.encoding.decode(getattr(instance, self.value_col))
 
     def _pop(self, key, default=None):
         try:
             instance = self.manager.get(**{self.key_col: key})
-            value = self._decode(getattr(instance, self.value_col))
+            value = self.encoding.decode(getattr(instance, self.value_col))
             instance.delete()
             self.touch_last_updated()
             return value
@@ -107,7 +116,7 @@ class ModelDict(DurableDict):
 
     def get_or_create(self, key, val):
         return self.manager.get_or_create(
-            defaults={self.value_col: self._encode(val)},
+            defaults={self.value_col: self.encoding.encode(val)},
             **{self.key_col: key}
         )
 
